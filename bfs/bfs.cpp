@@ -32,23 +32,36 @@ void top_down_step(
     int* distances)
 {
 
+    // 遍历 frontier 的每个节点
+    #pragma omp parallel for
     for (int i=0; i<frontier->count; i++) {
 
+        // 获取当前顶点编号
         int node = frontier->vertices[i];
 
+        // 获取当前节点出边的起始编号和终止编号
         int start_edge = g->outgoing_starts[node];
         int end_edge = (node == g->num_nodes - 1)
                            ? g->num_edges
                            : g->outgoing_starts[node + 1];
 
+        // 遍历当前顶点的所有出边邻居节点
         // attempt to add all neighbors to the new frontier
         for (int neighbor=start_edge; neighbor<end_edge; neighbor++) {
             int outgoing = g->outgoing_edges[neighbor];
 
+            // 每条边长度为 1，因此不需要做大小判断
+            // 如果该邻居节点尚未被访问过
             if (distances[outgoing] == NOT_VISITED_MARKER) {
+                // 距离 = 当前节点距离 + 1
                 distances[outgoing] = distances[node] + 1;
-                int index = new_frontier->count++;
-                new_frontier->vertices[index] = outgoing;
+                // 获取 “新前沿” 的新下标
+                #pragma omp critical
+                {
+                    int index = new_frontier->count++;
+                    // “新前沿” 的 第 index 个点是当前获取的出点
+                    new_frontier->vertices[index] = outgoing;
+                }
             }
         }
     }
@@ -58,20 +71,29 @@ void top_down_step(
 //
 // Result of execution is that, for each node in the graph, the
 // distance to the root is stored in sol.distances.
+// 参数1：graph：图结构体指针
+// 参数2：sol：存储结果的结构体指针
+// 这个函数要计算图中所有节点到根节点的距离，存储在 sol.distances 中
 void bfs_top_down(Graph graph, solution* sol) {
 
+    // 顶点集合1
     vertex_set list1;
+    // 顶点集合2
     vertex_set list2;
+    // 使用 graph 初始化这两个顶点集合(其实就是分配空间并且初始化空间为空)
     vertex_set_init(&list1, graph->num_nodes);
     vertex_set_init(&list2, graph->num_nodes);
 
     vertex_set* frontier = &list1;
     vertex_set* new_frontier = &list2;
 
+    // 初始化所有节点的距离为 -1， 表示“尚未访问”
     // initialize all nodes to NOT_VISITED
+    #pragma omp parallel for
     for (int i=0; i<graph->num_nodes; i++)
         sol->distances[i] = NOT_VISITED_MARKER;
 
+    // 节点 0 作为根节点，根节点到根节点的距离为 0
     // setup frontier with the root node
     frontier->vertices[frontier->count++] = ROOT_NODE_ID;
     sol->distances[ROOT_NODE_ID] = 0;
@@ -82,6 +104,7 @@ void bfs_top_down(Graph graph, solution* sol) {
         double start_time = CycleTimer::currentSeconds();
 #endif
 
+        // 清空 new_frontier，为下一轮做准备
         vertex_set_clear(new_frontier);
 
         top_down_step(graph, frontier, new_frontier, sol->distances);
@@ -91,6 +114,7 @@ void bfs_top_down(Graph graph, solution* sol) {
     printf("frontier=%-10d %.4f sec\n", frontier->count, end_time - start_time);
 #endif
 
+        // 交换 frontier 和 new_frontier 指针
         // swap pointers
         vertex_set* tmp = frontier;
         frontier = new_frontier;
