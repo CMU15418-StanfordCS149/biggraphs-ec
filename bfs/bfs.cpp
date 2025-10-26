@@ -32,7 +32,7 @@ void top_down_step(
     int* distances)
 {
     // 遍历 frontier 的每个节点
-    #pragma omp parallel for
+    #pragma omp parallel for schedule(dynamic, 64)
     for (int i=0; i<frontier->count; i++) {
 
         // 获取当前顶点编号
@@ -52,13 +52,16 @@ void top_down_step(
         for (int neighbor=start_edge; neighbor<end_edge; neighbor++) {
             int outgoing = g->outgoing_edges[neighbor];
 
-            if (__sync_bool_compare_and_swap(&distances[outgoing], NOT_VISITED_MARKER, new_distance)) {
-                // 原子地为 new_frontier 分配一个唯一下标
-                int index;
-                #pragma omp atomic capture
-                index = new_frontier->count++;
-                // 由于每个线程的 index 不一样，所有这行代码不需要放入临界区
-                new_frontier->vertices[index] = outgoing;
+            // 在进入原子比较(临界区)之前，先检查一下该节点是否已经被访问过，这样可以减少不必要的同步开销
+            if(distances[outgoing] == NOT_VISITED_MARKER) {
+                if (__sync_bool_compare_and_swap(&distances[outgoing], NOT_VISITED_MARKER, new_distance)) {
+                    // 原子地为 new_frontier 分配一个唯一下标
+                    int index;
+                    #pragma omp atomic capture
+                    index = new_frontier->count++;
+                    // 由于每个线程的 index 不一样，所有这行代码不需要放入临界区
+                    new_frontier->vertices[index] = outgoing;
+                }
             }
         }
     }
