@@ -44,12 +44,15 @@ void top_down_step(
                            ? g->num_edges
                            : g->outgoing_starts[node + 1];
 
+        // 本次循环里，所有的 new_distance 都是相同的，把计算放到临界区外面，以减少同步操作的开销
+        int new_distance = distances[node] + 1;
+
         // 遍历当前顶点的所有出边邻居节点
         // attempt to add all neighbors to the new frontier
         for (int neighbor=start_edge; neighbor<end_edge; neighbor++) {
             int outgoing = g->outgoing_edges[neighbor];
 
-            if (__sync_bool_compare_and_swap(&distances[outgoing], NOT_VISITED_MARKER, distances[node] + 1)) {
+            if (__sync_bool_compare_and_swap(&distances[outgoing], NOT_VISITED_MARKER, new_distance)) {
                 // 原子地为 new_frontier 分配一个唯一下标
                 int index;
                 #pragma omp atomic capture
