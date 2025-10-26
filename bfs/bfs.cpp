@@ -31,7 +31,6 @@ void top_down_step(
     vertex_set* new_frontier,
     int* distances)
 {
-
     // 遍历 frontier 的每个节点
     #pragma omp parallel for
     for (int i=0; i<frontier->count; i++) {
@@ -50,18 +49,13 @@ void top_down_step(
         for (int neighbor=start_edge; neighbor<end_edge; neighbor++) {
             int outgoing = g->outgoing_edges[neighbor];
 
-            // 每条边长度为 1，因此不需要做大小判断
-            // 如果该邻居节点尚未被访问过
-            if (distances[outgoing] == NOT_VISITED_MARKER) {
-                // 距离 = 当前节点距离 + 1
-                distances[outgoing] = distances[node] + 1;
-                // 获取 “新前沿” 的新下标
-                #pragma omp critical
-                {
-                    int index = new_frontier->count++;
-                    // “新前沿” 的 第 index 个点是当前获取的出点
-                    new_frontier->vertices[index] = outgoing;
-                }
+            if (__sync_bool_compare_and_swap(&distances[outgoing], NOT_VISITED_MARKER, distances[node] + 1)) {
+                // 原子地为 new_frontier 分配一个唯一下标
+                int index;
+                #pragma omp atomic capture
+                index = new_frontier->count++;
+                // 由于每个线程的 index 不一样，所有这行代码不需要放入临界区
+                new_frontier->vertices[index] = outgoing;
             }
         }
     }
