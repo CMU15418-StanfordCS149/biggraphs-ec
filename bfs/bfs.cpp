@@ -5,6 +5,7 @@
 #include <string.h>
 #include <cstddef>
 #include <omp.h>
+#include <vector>
 
 #include "../common/CycleTimer.h"
 #include "../common/graph.h"
@@ -31,37 +32,52 @@ void top_down_step(
     vertex_set* new_frontier,
     int* distances)
 {
-    // 遍历 frontier 的每个节点
-    #pragma omp parallel for schedule(dynamic, 64)
-    for (int i=0; i<frontier->count; i++) {
+    #pragma omp parallel 
+    {
+        std::vector<int> local_buf;
+        // 估算 vector 的大小，减少 realloc 开销
+        int tid = omp_get_thread_num();
+        int nthreads = omp_get_num_threads();
+        int approx = (frontier->count + nthreads - 1) / nthreads;
+        local_buf.reserve(std::min(approx * 2, 1024));
 
-        // 获取当前顶点编号
-        int node = frontier->vertices[i];
+        // 遍历 frontier 的每个节点
+        #pragma omp for schedule(dynamic, 64)
+        for (int i=0; i<frontier->count; i++) {
 
-        // 获取当前节点出边的起始编号和终止编号
-        int start_edge = g->outgoing_starts[node];
-        int end_edge = (node == g->num_nodes - 1)
-                           ? g->num_edges
-                           : g->outgoing_starts[node + 1];
+            // 获取当前顶点编号
+            int node = frontier->vertices[i];
 
-        // 本次循环里，所有的 new_distance 都是相同的，把计算放到临界区外面，以减少同步操作的开销
-        int new_distance = distances[node] + 1;
+            // 获取当前节点出边的起始编号和终止编号
+            int start_edge = g->outgoing_starts[node];
+            int end_edge = (node == g->num_nodes - 1)
+                            ? g->num_edges
+                            : g->outgoing_starts[node + 1];
 
-        // 遍历当前顶点的所有出边邻居节点
-        // attempt to add all neighbors to the new frontier
-        for (int neighbor=start_edge; neighbor<end_edge; neighbor++) {
-            int outgoing = g->outgoing_edges[neighbor];
+            // 本次循环里，所有的 new_distance 都是相同的，把计算放到临界区外面，以减少同步操作的开销
+            int new_distance = distances[node] + 1;
 
-            // 在进入原子比较(临界区)之前，先检查一下该节点是否已经被访问过，这样可以减少不必要的同步开销
-            if(distances[outgoing] == NOT_VISITED_MARKER) {
-                if (__sync_bool_compare_and_swap(&distances[outgoing], NOT_VISITED_MARKER, new_distance)) {
-                    // 原子地为 new_frontier 分配一个唯一下标
-                    int index;
-                    #pragma omp atomic capture
-                    index = new_frontier->count++;
-                    // 由于每个线程的 index 不一样，所有这行代码不需要放入临界区
-                    new_frontier->vertices[index] = outgoing;
+            // 遍历当前顶点的所有出边邻居节点
+            // attempt to add all neighbors to the new frontier
+            for (int neighbor=start_edge; neighbor<end_edge; neighbor++) {
+                int outgoing = g->outgoing_edges[neighbor];
+
+                // 在进入原子比较(临界区)之前，先检查一下该节点是否已经被访问过，这样可以减少不必要的同步开销
+                if(distances[outgoing] == NOT_VISITED_MARKER) {
+                    if (__sync_bool_compare_and_swap(&distances[outgoing], NOT_VISITED_MARKER, new_distance)) {
+                        // 把节点加入到本地缓冲区，避免同步开销
+                        local_buf.push_back(outgoing);
+                    }
                 }
+            }
+        }
+
+        // 把本地缓冲区内的节点放入全局的 new_frontier 数组，一次放入一整个 buffer，减少同步开销
+        // 同步开销：O(insertions) --> O(threads) 从节点插入次数将为线程数
+        if (!local_buf.empty()) {
+            int offset = __sync_fetch_and_add(&new_frontier->count, (int)local_buf.size());
+            for (int k = 0; k < local_buf.size(); k++) {
+                new_frontier->vertices[offset + k] = local_buf[k];
             }
         }
     }
