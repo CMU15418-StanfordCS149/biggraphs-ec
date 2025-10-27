@@ -104,7 +104,7 @@ void bfs_top_down(Graph graph, solution* sol) {
 
     // 初始化所有节点的距离为 -1， 表示“尚未访问”
     // initialize all nodes to NOT_VISITED
-    #pragma omp parallel for
+    #pragma omp parallel for schedule(dynamic, 64)
     for (int i=0; i<graph->num_nodes; i++)
         sol->distances[i] = NOT_VISITED_MARKER;
 
@@ -145,7 +145,7 @@ void bottom_up_step(
     Graph g,
     vertex_set* frontier,
     vertex_set* new_frontier,
-    int* distances)
+    int* distances, bool *visited)
 {
     // 获取当前前沿到根节点的距离
     int frontier_distance = distances[frontier->vertices[0]];
@@ -165,7 +165,7 @@ void bottom_up_step(
         #pragma omp for schedule(dynamic, 64)
         for (int node = 0; node < g->num_nodes; node++) {
             // 如果 v 尚未被访问 并且 ... 
-            if(distances[node] == NOT_VISITED_MARKER) {
+            if(!visited[node]) {
                 // ... 并且 v 与边界上的顶点 u 共享一条入边：
                 // 遍历顶点 v 的所有入边邻居节点
                 int start_edge = g->incoming_starts[node];
@@ -174,10 +174,13 @@ void bottom_up_step(
                                 : g->incoming_starts[node + 1];
                 for (int neighbor = start_edge; neighbor < end_edge; neighbor++) {
                     int incoming = g->incoming_edges[neighbor];
-                    // 检查该入边邻居节点是否在 frontier 中，通过 frontier_distance 判断，从而避免遍历 frontier 数组，省去一个循环
-                    if(distances[incoming] == frontier_distance) {
+                    // 检查该入边邻居节点是否已被访问过，若被访问过，说明它在 frontier 上
+                    // （只有 frontier 节点会和 unvisited 节点接触）
+                    if(visited[incoming]) {
                         local_buf.push_back(node);
                         distances[node] = new_distance;
+                        // 这里不能设置 visited 数组，否则会破坏 "被访问过的节点都在 frontier 上" 的假设
+                        // visited[node] = true; 
                         break;
                     }
                 }
@@ -189,7 +192,9 @@ void bottom_up_step(
         if (!local_buf.empty()) {
             int offset = __sync_fetch_and_add(&new_frontier->count, (int)local_buf.size());
             for (int k = 0; k < local_buf.size(); k++) {
-                new_frontier->vertices[offset + k] = local_buf[k];
+                int node = local_buf[k];
+                new_frontier->vertices[offset + k] = node;
+                visited[node] = true;
             }
         }
     }
@@ -224,14 +229,20 @@ void bfs_bottom_up(Graph graph, solution* sol)
     vertex_set* frontier = &list1;
     vertex_set* new_frontier = &list2;
 
+    // 记录节点是否被访问过的数组，占用内存带宽比 distances 更小，节省内存带宽
+    bool* visited = (bool *) malloc(sizeof(bool) * graph->num_nodes);
+
     // 初始化所有节点的距离为 -1， 表示“尚未访问”
-    #pragma omp parallel for
-    for (int i=0; i<graph->num_nodes; i++)
+    #pragma omp parallel for schedule(dynamic, 64)
+    for (int i=0; i<graph->num_nodes; i++) {
         sol->distances[i] = NOT_VISITED_MARKER;
+        visited[i] = false;
+    }
 
     // 节点 0 作为根节点，根节点到根节点的距离为 0
     frontier->vertices[frontier->count++] = ROOT_NODE_ID;
     sol->distances[ROOT_NODE_ID] = 0;
+    visited[ROOT_NODE_ID] = true;
 
     while (frontier->count != 0) {
 
@@ -241,7 +252,7 @@ void bfs_bottom_up(Graph graph, solution* sol)
         // 清空 new_frontier，为下一轮做准备
         vertex_set_clear(new_frontier);
 
-        bottom_up_step(graph, frontier, new_frontier, sol->distances);
+        bottom_up_step(graph, frontier, new_frontier, sol->distances, visited);
 
 #ifdef VERBOSE
     double end_time = CycleTimer::currentSeconds();
@@ -253,6 +264,10 @@ void bfs_bottom_up(Graph graph, solution* sol)
         frontier = new_frontier;
         new_frontier = tmp;
     }
+
+    // 释放 visited 数组
+    free(visited);
+    visited = nullptr;
 }
 
 void bfs_hybrid(Graph graph, solution* sol)
