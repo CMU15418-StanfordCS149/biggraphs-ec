@@ -148,6 +148,9 @@ void bottom_up_step(
     vertex_set* new_frontier,
     int* distances)
 {
+    // 获取当前前沿到根节点的距离
+    int frontier_distance = distances[frontier->vertices[0]];
+
     // 对于图中的每个顶点 v：
     for (int node = 0; node < g->num_nodes; node++) {
         // 如果 v 尚未被访问 并且 ... 
@@ -158,23 +161,20 @@ void bottom_up_step(
             int end_edge = (node == g->num_nodes - 1)
                             ? g->num_edges
                             : g->incoming_starts[node + 1];
-            int choose_incoming = -1; // 被选中的入边邻居节点，在循环内选择距离最小的入边邻居
-            int choose_incoming_distance = __INT_MAX__; // 被选中的入边邻居节点的距离
+            int choose_incoming = -1; // 被选中的入边邻居节点
             for (int neighbor = start_edge; neighbor < end_edge; neighbor++) {
                 int incoming = g->incoming_edges[neighbor];
-                // 检查该入边邻居节点是否在 frontier 中，如果是，检查距离是否比当前距离小
-                for (int i = 0; i < frontier->count; i++) {
-                    if (frontier->vertices[i] == incoming && choose_incoming_distance > distances[incoming]) {
-                        choose_incoming = incoming;
-                        choose_incoming_distance = distances[incoming];
-                    }
+                // 检查该入边邻居节点是否在 frontier 中，通过 frontier_distance 判断，从而避免遍历 frontier 数组，省去一个循环
+                if(distances[incoming] == frontier_distance) {
+                    choose_incoming = incoming;
+                    break;
                 }
             }
             // 若被选中的入边邻居节点不为 -1，说明当前顶点 v 与边界上的顶点 u 共享一条入边
             if(choose_incoming != -1) {
                 // 将顶点 v 添加到边界；
                 new_frontier->vertices[new_frontier->count++] = node;
-                distances[node] = choose_incoming_distance + 1;
+                distances[node] = frontier_distance + 1;
             }
         }
     }
