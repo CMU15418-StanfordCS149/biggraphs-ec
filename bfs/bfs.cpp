@@ -138,6 +138,52 @@ void bfs_top_down(Graph graph, solution* sol) {
     }
 }
 
+// 对于图中的每个顶点 v：
+//     如果 v 尚未被访问 并且
+//        v 与边界上的顶点 u 共享一条入边：
+//           将顶点 v 添加到边界；
+void bottom_up_step(
+    Graph g,
+    vertex_set* frontier,
+    vertex_set* new_frontier,
+    int* distances)
+{
+    // 对于图中的每个顶点 v：
+    for (int node = 0; node < g->num_nodes; node++) {
+        // 如果 v 尚未被访问 并且 ... 
+        if(distances[node] == NOT_VISITED_MARKER) {
+            // ... 并且 v 与边界上的顶点 u 共享一条入边：
+            // 遍历顶点 v 的所有入边邻居节点
+            int start_edge = g->incoming_starts[node];
+            int end_edge = (node == g->num_nodes - 1)
+                            ? g->num_edges
+                            : g->incoming_starts[node + 1];
+            int choose_incoming = -1; // 被选中的入边邻居节点，在循环内选择距离最小的入边邻居
+            int choose_incoming_distance = __INT_MAX__; // 被选中的入边邻居节点的距离
+            for (int neighbor = start_edge; neighbor < end_edge; neighbor++) {
+                int incoming = g->incoming_edges[neighbor];
+                // 检查该入边邻居节点是否在 frontier 中，如果是，检查距离是否比当前距离小
+                for (int i = 0; i < frontier->count; i++) {
+                    if (frontier->vertices[i] == incoming && choose_incoming_distance > distances[incoming]) {
+                        choose_incoming = incoming;
+                        choose_incoming_distance = distances[incoming];
+                    }
+                }
+            }
+            // 若被选中的入边邻居节点不为 -1，说明当前顶点 v 与边界上的顶点 u 共享一条入边
+            if(choose_incoming != -1) {
+                // 将顶点 v 添加到边界；
+                new_frontier->vertices[new_frontier->count++] = node;
+                distances[node] = choose_incoming_distance + 1;
+            }
+        }
+    }
+}
+
+// 对于图中的每个顶点 v：
+//     如果 v 尚未被访问 并且
+//        v 与边界上的顶点 u 共享一条入边：
+//           将顶点 v 添加到边界；
 void bfs_bottom_up(Graph graph, solution* sol)
 {
     // CS149 students:
@@ -151,6 +197,47 @@ void bfs_bottom_up(Graph graph, solution* sol)
     // As was done in the top-down case, you may wish to organize your
     // code by creating subroutine bottom_up_step() that is called in
     // each step of the BFS process.
+
+    // 顶点集合1
+    vertex_set list1;
+    // 顶点集合2
+    vertex_set list2;
+    // 使用 graph 初始化这两个顶点集合(其实就是分配空间并且初始化空间为空)
+    vertex_set_init(&list1, graph->num_nodes);
+    vertex_set_init(&list2, graph->num_nodes);
+
+    vertex_set* frontier = &list1;
+    vertex_set* new_frontier = &list2;
+
+    // 初始化所有节点的距离为 -1， 表示“尚未访问”
+    #pragma omp parallel for
+    for (int i=0; i<graph->num_nodes; i++)
+        sol->distances[i] = NOT_VISITED_MARKER;
+
+    // 节点 0 作为根节点，根节点到根节点的距离为 0
+    frontier->vertices[frontier->count++] = ROOT_NODE_ID;
+    sol->distances[ROOT_NODE_ID] = 0;
+
+    while (frontier->count != 0) {
+
+#ifdef VERBOSE
+        double start_time = CycleTimer::currentSeconds();
+#endif
+        // 清空 new_frontier，为下一轮做准备
+        vertex_set_clear(new_frontier);
+
+        bottom_up_step(graph, frontier, new_frontier, sol->distances);
+
+#ifdef VERBOSE
+    double end_time = CycleTimer::currentSeconds();
+    printf("frontier=%-10d %.4f sec\n", frontier->count, end_time - start_time);
+#endif
+
+        // 交换 frontier 和 new_frontier 指针
+        vertex_set* tmp = frontier;
+        frontier = new_frontier;
+        new_frontier = tmp;
+    }
 }
 
 void bfs_hybrid(Graph graph, solution* sol)
