@@ -172,19 +172,14 @@ void bottom_up_step(
                 int end_edge = (node == g->num_nodes - 1)
                                 ? g->num_edges
                                 : g->incoming_starts[node + 1];
-                int choose_incoming = -1; // 被选中的入边邻居节点
                 for (int neighbor = start_edge; neighbor < end_edge; neighbor++) {
                     int incoming = g->incoming_edges[neighbor];
                     // 检查该入边邻居节点是否在 frontier 中，通过 frontier_distance 判断，从而避免遍历 frontier 数组，省去一个循环
                     if(distances[incoming] == frontier_distance) {
-                        choose_incoming = incoming;
+                        local_buf.push_back(node);
+                        distances[node] = new_distance;
                         break;
                     }
-                }
-                // 若被选中的入边邻居节点不为 -1，说明当前顶点 v 与边界上的顶点 u 共享一条入边
-                if(choose_incoming != -1) {
-                    local_buf.push_back(node);
-                    distances[node] = new_distance;
                 }
             }
         }
