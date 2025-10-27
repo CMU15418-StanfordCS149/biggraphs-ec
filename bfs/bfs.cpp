@@ -36,7 +36,6 @@ void top_down_step(
     {
         std::vector<int> local_buf;
         // 估算 vector 的大小，减少 realloc 开销
-        int tid = omp_get_thread_num();
         int nthreads = omp_get_num_threads();
         int approx = (frontier->count + nthreads - 1) / nthreads;
         local_buf.reserve(std::min(approx * 2, 1024));
@@ -150,33 +149,52 @@ void bottom_up_step(
 {
     // 获取当前前沿到根节点的距离
     int frontier_distance = distances[frontier->vertices[0]];
+    // 提前计算，避免循环中的计算开销
+    int new_distance = frontier_distance + 1; 
 
-    // 对于图中的每个顶点 v：
-    #pragma omp parallel for schedule(dynamic, 64)
-    for (int node = 0; node < g->num_nodes; node++) {
-        // 如果 v 尚未被访问 并且 ... 
-        if(distances[node] == NOT_VISITED_MARKER) {
-            // ... 并且 v 与边界上的顶点 u 共享一条入边：
-            // 遍历顶点 v 的所有入边邻居节点
-            int start_edge = g->incoming_starts[node];
-            int end_edge = (node == g->num_nodes - 1)
-                            ? g->num_edges
-                            : g->incoming_starts[node + 1];
-            int choose_incoming = -1; // 被选中的入边邻居节点
-            for (int neighbor = start_edge; neighbor < end_edge; neighbor++) {
-                int incoming = g->incoming_edges[neighbor];
-                // 检查该入边邻居节点是否在 frontier 中，通过 frontier_distance 判断，从而避免遍历 frontier 数组，省去一个循环
-                if(distances[incoming] == frontier_distance) {
-                    choose_incoming = incoming;
-                    break;
+    #pragma omp parallel 
+    {
+        // 本地缓冲，减少同步开销
+        std::vector<int> local_buf;
+        // 估算 vector 的大小，减少 realloc 开销
+        int nthreads = omp_get_num_threads();
+        int approx = (frontier->count + nthreads - 1) / nthreads;
+        local_buf.reserve(std::min(approx * 2, 1024));
+
+        // 对于图中的每个顶点 v：
+        #pragma omp for schedule(dynamic, 64)
+        for (int node = 0; node < g->num_nodes; node++) {
+            // 如果 v 尚未被访问 并且 ... 
+            if(distances[node] == NOT_VISITED_MARKER) {
+                // ... 并且 v 与边界上的顶点 u 共享一条入边：
+                // 遍历顶点 v 的所有入边邻居节点
+                int start_edge = g->incoming_starts[node];
+                int end_edge = (node == g->num_nodes - 1)
+                                ? g->num_edges
+                                : g->incoming_starts[node + 1];
+                int choose_incoming = -1; // 被选中的入边邻居节点
+                for (int neighbor = start_edge; neighbor < end_edge; neighbor++) {
+                    int incoming = g->incoming_edges[neighbor];
+                    // 检查该入边邻居节点是否在 frontier 中，通过 frontier_distance 判断，从而避免遍历 frontier 数组，省去一个循环
+                    if(distances[incoming] == frontier_distance) {
+                        choose_incoming = incoming;
+                        break;
+                    }
+                }
+                // 若被选中的入边邻居节点不为 -1，说明当前顶点 v 与边界上的顶点 u 共享一条入边
+                if(choose_incoming != -1) {
+                    local_buf.push_back(node);
+                    distances[node] = new_distance;
                 }
             }
-            // 若被选中的入边邻居节点不为 -1，说明当前顶点 v 与边界上的顶点 u 共享一条入边
-            if(choose_incoming != -1) {
-                // 将顶点 v 添加到边界；
-                int index = __sync_fetch_and_add(&new_frontier->count, 1);
-                new_frontier->vertices[index] = node;
-                distances[node] = frontier_distance + 1;
+        }
+
+        // 把本地缓冲区内的节点放入全局的 new_frontier 数组，一次放入一整个 buffer，减少同步开销
+        // 同步开销：O(insertions) --> O(threads) 从节点插入次数将为线程数
+        if (!local_buf.empty()) {
+            int offset = __sync_fetch_and_add(&new_frontier->count, (int)local_buf.size());
+            for (int k = 0; k < local_buf.size(); k++) {
+                new_frontier->vertices[offset + k] = local_buf[k];
             }
         }
     }
