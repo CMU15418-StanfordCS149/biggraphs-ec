@@ -152,6 +152,7 @@ void bottom_up_step(
     int frontier_distance = distances[frontier->vertices[0]];
 
     // 对于图中的每个顶点 v：
+    #pragma omp parallel for schedule(dynamic, 64)
     for (int node = 0; node < g->num_nodes; node++) {
         // 如果 v 尚未被访问 并且 ... 
         if(distances[node] == NOT_VISITED_MARKER) {
@@ -173,7 +174,8 @@ void bottom_up_step(
             // 若被选中的入边邻居节点不为 -1，说明当前顶点 v 与边界上的顶点 u 共享一条入边
             if(choose_incoming != -1) {
                 // 将顶点 v 添加到边界；
-                new_frontier->vertices[new_frontier->count++] = node;
+                int index = __sync_fetch_and_add(&new_frontier->count, 1);
+                new_frontier->vertices[index] = node;
                 distances[node] = frontier_distance + 1;
             }
         }
