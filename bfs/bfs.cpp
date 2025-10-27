@@ -40,6 +40,9 @@ void top_down_step(
         int approx = (frontier->count + nthreads - 1) / nthreads;
         local_buf.reserve(std::min(approx * 2, 1024));
 
+        // 本次函数里，所有的 new_distance 都是相同的，把计算放到外面，以减少内部循环计算开销
+        int new_distance = distances[frontier->vertices[0]] + 1;
+
         // 遍历 frontier 的每个节点
         #pragma omp for schedule(dynamic, 64)
         for (int i=0; i<frontier->count; i++) {
@@ -52,9 +55,6 @@ void top_down_step(
             int end_edge = (node == g->num_nodes - 1)
                             ? g->num_edges
                             : g->outgoing_starts[node + 1];
-
-            // 本次循环里，所有的 new_distance 都是相同的，把计算放到临界区外面，以减少同步操作的开销
-            int new_distance = distances[node] + 1;
 
             // 遍历当前顶点的所有出边邻居节点
             // attempt to add all neighbors to the new frontier
