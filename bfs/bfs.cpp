@@ -13,6 +13,8 @@
 #define ROOT_NODE_ID 0
 #define NOT_VISITED_MARKER -1
 
+int global_thread_num = 0;
+
 void vertex_set_clear(vertex_set* list) {
     list->count = 0;
 }
@@ -191,9 +193,11 @@ void bottom_up_step(
         // 同步开销：O(insertions) --> O(threads) 从节点插入次数将为线程数
         if (!local_buf.empty()) {
             int offset = __sync_fetch_and_add(&new_frontier->count, (int)local_buf.size());
+            // 使用 memcpy 设置 new_frontier->vertices 数组，比手动for循环更快
+            memcpy(&new_frontier->vertices[offset], &local_buf[0], sizeof(int) * local_buf.size());
+            // 设置 visited 数组
             for (int k = 0; k < local_buf.size(); k++) {
                 int node = local_buf[k];
-                new_frontier->vertices[offset + k] = node;
                 visited[node] = true;
             }
         }
@@ -232,11 +236,29 @@ void bfs_bottom_up(Graph graph, solution* sol)
     // 记录节点是否被访问过的数组，占用内存带宽比 distances 更小，节省内存带宽
     bool* visited = (bool *) malloc(sizeof(bool) * graph->num_nodes);
 
-    // 初始化所有节点的距离为 -1， 表示“尚未访问”
-    #pragma omp parallel for schedule(dynamic, 64)
-    for (int i=0; i<graph->num_nodes; i++) {
-        sol->distances[i] = NOT_VISITED_MARKER;
-        visited[i] = false;
+    // 获取线程数
+    global_thread_num = omp_get_max_threads();
+    // 计算初始化过程中每个 chunk 的大小
+    size_t chunk_size = graph->num_nodes / global_thread_num;
+
+    // 初始化所有节点的距离为 -1
+    #pragma omp parallel
+    {
+        int thread_id = omp_get_thread_num();
+        size_t start_idx = thread_id * chunk_size;
+        size_t end_idx = (thread_id == global_thread_num - 1) ? graph->num_nodes : start_idx + chunk_size;
+        size_t chunk_bytes = (end_idx - start_idx) * sizeof(int);
+        memset(sol->distances + start_idx, NOT_VISITED_MARKER, chunk_bytes);
+    }
+
+    // 初始化所有节点为尚未访问
+    #pragma omp parallel
+    {
+        int thread_id = omp_get_thread_num();
+        size_t start_idx = thread_id * chunk_size;
+        size_t end_idx = (thread_id == global_thread_num - 1) ? graph->num_nodes : start_idx + chunk_size;
+        size_t chunk_bytes = (end_idx - start_idx) * sizeof(bool);
+        memset(visited + start_idx, false, chunk_bytes);
     }
 
     // 节点 0 作为根节点，根节点到根节点的距离为 0
