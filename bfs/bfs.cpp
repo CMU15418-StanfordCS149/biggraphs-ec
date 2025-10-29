@@ -13,8 +13,6 @@
 #define ROOT_NODE_ID 0
 #define NOT_VISITED_MARKER -1
 
-int global_thread_num = 0;
-
 void vertex_set_clear(vertex_set* list) {
     list->count = 0;
 }
@@ -164,7 +162,7 @@ void bottom_up_step(
         local_buf.reserve(std::min(approx * 2, 1024));
 
         // 对于图中的每个顶点 v：
-        #pragma omp for schedule(dynamic, 64)
+        #pragma omp for schedule(dynamic, 1000)
         for (int node = 0; node < g->num_nodes; node++) {
             // 如果 v 尚未被访问 并且 ... 
             if(!visited[node]) {
@@ -234,32 +232,10 @@ void bfs_bottom_up(Graph graph, solution* sol)
     vertex_set* new_frontier = &list2;
 
     // 记录节点是否被访问过的数组，占用内存带宽比 distances 更小，节省内存带宽
-    bool* visited = (bool *) malloc(sizeof(bool) * graph->num_nodes);
+    bool* visited = (bool *) calloc(graph->num_nodes, sizeof(bool));
+    // unvisted 数组无需初始化，calloc 已经将所有字节置零，表示 false
 
-    // 获取线程数
-    global_thread_num = omp_get_max_threads();
-    // 计算初始化过程中每个 chunk 的大小
-    size_t chunk_size = graph->num_nodes / global_thread_num;
-
-    // 初始化所有节点的距离为 -1
-    #pragma omp parallel
-    {
-        int thread_id = omp_get_thread_num();
-        size_t start_idx = thread_id * chunk_size;
-        size_t end_idx = (thread_id == global_thread_num - 1) ? graph->num_nodes : start_idx + chunk_size;
-        size_t chunk_bytes = (end_idx - start_idx) * sizeof(int);
-        memset(sol->distances + start_idx, NOT_VISITED_MARKER, chunk_bytes);
-    }
-
-    // 初始化所有节点为尚未访问
-    #pragma omp parallel
-    {
-        int thread_id = omp_get_thread_num();
-        size_t start_idx = thread_id * chunk_size;
-        size_t end_idx = (thread_id == global_thread_num - 1) ? graph->num_nodes : start_idx + chunk_size;
-        size_t chunk_bytes = (end_idx - start_idx) * sizeof(bool);
-        memset(visited + start_idx, false, chunk_bytes);
-    }
+    // sol->distances 数组也无需初始化，因为在 bottom_up_step 中没有读取操作，只有写入操作
 
     // 节点 0 作为根节点，根节点到根节点的距离为 0
     frontier->vertices[frontier->count++] = ROOT_NODE_ID;
