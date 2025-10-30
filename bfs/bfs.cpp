@@ -268,10 +268,78 @@ void bfs_bottom_up(Graph graph, solution* sol)
     visited = nullptr;
 }
 
+void hybrid_step(
+    Graph g,
+    vertex_set* frontier,
+    vertex_set* new_frontier,
+    int* distances, bool *visited)
+{
+    if(frontier->count < g->num_nodes / 20) {
+        // 当前 frontier 较小 (点数小于总点数 5%)，使用 top-down 方式
+        top_down_step(g, frontier, new_frontier, distances);
+        // 设置 visited 数组
+        #pragma omp parallel for schedule(dynamic, 64)
+        for(int i = 0; i < new_frontier->count; i++) {
+            int node = new_frontier->vertices[i];
+            visited[node] = true;
+        }
+    } else {
+        // 当前 frontier 较大，使用 bottom-up 方式
+        bottom_up_step(g, frontier, new_frontier, distances, visited);
+    }
+}
+
 void bfs_hybrid(Graph graph, solution* sol)
 {
     // CS149 students:
     //
     // You will need to implement the "hybrid" BFS here as
     // described in the handout.
+
+    // 顶点集合1
+    vertex_set list1;
+    // 顶点集合2
+    vertex_set list2;
+    // 使用 graph 初始化这两个顶点集合(其实就是分配空间并且初始化空间为空)
+    vertex_set_init(&list1, graph->num_nodes);
+    vertex_set_init(&list2, graph->num_nodes);
+
+    vertex_set* frontier = &list1;
+    vertex_set* new_frontier = &list2;
+
+    // 记录节点是否被访问过的数组，占用内存带宽比 distances 更小，节省内存带宽
+    bool* visited = (bool *) calloc(graph->num_nodes, sizeof(bool));
+    // unvisted 数组无需初始化，calloc 已经将所有字节置零，表示 false
+
+    // sol->distances 数组也无需初始化，因为在 bottom_up_step 中没有读取操作，只有写入操作
+
+    // 节点 0 作为根节点，根节点到根节点的距离为 0
+    frontier->vertices[frontier->count++] = ROOT_NODE_ID;
+    sol->distances[ROOT_NODE_ID] = 0;
+    visited[ROOT_NODE_ID] = true;
+
+    while (frontier->count != 0) {
+
+#ifdef VERBOSE
+        double start_time = CycleTimer::currentSeconds();
+#endif
+        // 清空 new_frontier，为下一轮做准备
+        vertex_set_clear(new_frontier);
+
+        hybrid_step(graph, frontier, new_frontier, sol->distances, visited);
+
+#ifdef VERBOSE
+    double end_time = CycleTimer::currentSeconds();
+    printf("frontier=%-10d %.4f sec\n", frontier->count, end_time - start_time);
+#endif
+
+        // 交换 frontier 和 new_frontier 指针
+        vertex_set* tmp = frontier;
+        frontier = new_frontier;
+        new_frontier = tmp;
+    }
+
+    // 释放 visited 数组
+    free(visited);
+    visited = nullptr;
 }
